@@ -1,0 +1,14 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - hashicorp_vault:
+        url: 'http://127.0.0.1'
+        secret_path: 
+          - 'kv/secret1'
+          - 'kv_v1/v1_secret1'
+
+        approle_id: 7998b9fc-f602-0147-15ac-5abb2052f132
+        approle_secret: b640b65f-0405-e46f-5363-cdd18011b513
+
+    - debug:
+        msg: '{{ from_vault }} - {{ v1_1_secret }}'
