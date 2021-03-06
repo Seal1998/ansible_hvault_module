@@ -28,6 +28,7 @@ def get_single_secret(url, path, token, namespace, mounts):
                                 url=secret_url,
                                 headers={'X-Vault-Token': token, 'X-Vault-Namespace': namespace},
                                 method='GET',
+                                validate_certs=False
                                 )
         except Exception as err:
             return False, '%s - %s %s' % \
@@ -51,7 +52,8 @@ def login_approle(url, role_id, secret_id, namespace):
                             url=approle_login_url,
                             headers={'X-Vault-Namespace': namespace},
                             method='POST',
-                            data=data
+                            data=data,
+                            validate_certs=False
                             )
     except Exception as err:
         return False, '%s - %s %s' % \
@@ -68,6 +70,7 @@ def get_mounts_info(url, token, namespace):
                             url=mounts_url,
                             headers={'X-Vault-Token': token, 'X-Vault-Namespace': namespace},
                             method='GET',
+                            validate_certs=False
                             )
     except Exception as err:
         return False, '%s - %s %s' % \
