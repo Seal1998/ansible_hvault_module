@@ -1,5 +1,6 @@
-import requests
+import json
 from collections import namedtuple
+from ansible.module_utils.urls import open_url
 from ansible.module_utils.basic import AnsibleModule
 
 def split_path_by_parts(path):
@@ -14,49 +15,67 @@ def get_single_secret(url, path, token, namespace, mounts):
 
         VaultSecret = namedtuple('VaultSecret', ['full_path', 'secret_name', 'secret_data'])
 
-        if f'{kv_mount}/' not in mounts.keys():
-            return False, f'{kv_mount} kv engine does not exist'
+        if kv_mount+'/' not in mounts.keys():
+            return False, '%s kv engine does not exist' % kv_mount
         else:
-            kv_mount_version = mounts[f'{kv_mount}/']['options']['version']
+            kv_mount_version = mounts[kv_mount+'/']['options']['version']
         
         pull_api_endpoint = '/data' if kv_mount_version == '2' else ''
-        secret_response_raw = requests.get(f'{url}/v1/{kv_mount}{pull_api_endpoint}/{kv_mountless}', 
-                                            headers={'X-Vault-Token': token, 'X-Vault-Namespace': namespace},
-                                            verify=False)
-        if secret_response_raw.status_code == 200:
-            response_data = secret_response_raw.json()['data'] if kv_mount_version == '1' \
-                                                            else secret_response_raw.json()['data']['data']
-        elif secret_response_raw.status_code == 403:
-            return False, f'Access denied for {kv_mount}{pull_api_endpoint}/{kv_mountless}'
-        
-        else:
-            return False, f'{secret_response_raw.status_code} - {kv_mount}{pull_api_endpoint}/{kv_mountless}'
+        secret_url = '%s/v1/%s/%s/%s' % (url, kv_mount, pull_api_endpoint, kv_mountless)
 
-        secret = VaultSecret(f'{kv_mount}/{kv_mountless}', secret_name, response_data)
+        try:
+            response_data_raw = open_url(   
+                                url=secret_url,
+                                headers={'X-Vault-Token': token, 'X-Vault-Namespace': namespace},
+                                method='GET',
+                                )
+        except Exception as err:
+            return False, '%s - %s %s' % \
+                                (secret_url, url, err.code, err.reason)
+
+        response_data_versionless = json.load(response_data_raw)
+        response_data = response_data_versionless['data'] if kv_mount_version == '1' else \
+                                                response_data_versionless['data']['data']
+
+        secret = VaultSecret('%s/%s' % (kv_mount,kv_mountless), secret_name, response_data)
+
         return secret, False
 
 def login_approle(url, role_id, secret_id, namespace):
-    login_raw = requests.post(f'{url}/v1/auth/approle/login', 
-                        data={'role_id': role_id, 'secret_id': secret_id},
-                        headers={'X-Vault-Namespace': namespace},
-                        verify=False)
-    login_raw_dict = login_raw.json()
-    if login_raw.status_code != 200:
-        return False, f'{login_raw.status_code} - auth/approle/login - {login_raw.text}'
-    else:
-        token = login_raw_dict['auth']['client_token']
-        return token, False
+    approle_login_url = '%s/v1/auth/approle/login' % url
+
+    data = json.dumps({'role_id': role_id, 'secret_id': secret_id}).encode()
+
+    try:
+        login_raw = open_url(   
+                            url=approle_login_url,
+                            headers={'X-Vault-Namespace': namespace},
+                            method='POST',
+                            data=data
+                            )
+    except Exception as err:
+        return False, '%s - %s %s' % \
+                            (approle_login_url, err.code, err.reason)
+
+    token = json.load(login_raw)['auth']['client_token']
+    
+    return token, False
 
 def get_mounts_info(url, token, namespace):
-    mounts_raw = requests.get(f'{url}/v1/sys/mounts', 
-                    headers={'X-Vault-Token': token, 'X-Vault-Namespace': namespace},
-                    verify=False)
-    mounts_raw_dict = mounts_raw.json()
-    if mounts_raw.status_code != 200:
-        return False, f'{mounts_raw.status_code} - sys/mounts'
-    else:
-        mounts_info = mounts_raw_dict['data']
-        return mounts_info, False
+    mounts_url = '%s/v1/sys/mounts' % url
+    try:
+        mounts_raw = open_url(   
+                            url=mounts_url,
+                            headers={'X-Vault-Token': token, 'X-Vault-Namespace': namespace},
+                            method='GET',
+                            )
+    except Exception as err:
+        return False, '%s - %s %s' % \
+                            (mounts_url, err.code, err.reason)
+
+    mounts = json.load(mounts_raw)['data']
+
+    return mounts, False
 
 def run_module():
     args = {
@@ -108,7 +127,7 @@ def run_module():
     for raw_path in module.params['secret_path']:
         if type(raw_path) is dict:
             if 'path' not in raw_path.keys():
-                module.fail_json(msg=f'No path field in {raw_secret} secret')
+                module.fail_json(msg='No path field in %s secret' % raw_path)
             else:
                 secret_name = raw_path['path'].split('/')[-1]
                 complex_secrets[secret_name] = raw_path
@@ -124,7 +143,7 @@ def run_module():
     elif all([module.params['approle_id'], module.params['approle_secret']]):
         token, error = login_approle(vault_url, module.params['approle_id'], module.params['approle_secret'], namespace)
         if error:
-            module.fail_json(msg=f'{error}')
+            module.fail_json(msg='%s' % error)
 
     elif module.params['token']:
         token = module.params['token']
@@ -132,7 +151,7 @@ def run_module():
 # get mounts info
     vault_mounts, error = get_mounts_info(vault_url, token, namespace)
     if error:
-        module.fail_json(msg=f'{error}')
+        module.fail_json(msg='%s' % error)
 
 # get secrets from Vault
     vault_secrets = []
@@ -140,7 +159,7 @@ def run_module():
         secret, error = get_single_secret(vault_url, path, token, namespace, vault_mounts)
 
         if error:
-            module.fail_json(msg=f'{error}')
+            module.fail_json(msg='%s' % error)
         else:
             vault_secrets.append(secret)
 
