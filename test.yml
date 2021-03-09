@@ -2,15 +2,14 @@
   gather_facts: false
   tasks:
     - hashicorp_vault:
-        url: 'http://127.0.0.1'
+        url: 'http://172.17.0.2:8200'
         secret_path: 
-          - path: 'kv/secret1'
+          - path: 'secrets2/secret1'
             keys:
-              - 'test_key'
-          - 'kv_v1/v1_secret1'
+              - "from_vault"
 
-        approle_id: 7998b9fc-f602-0147-15ac-5abb2052f132
-        approle_secret: b640b65f-0405-e46f-5363-cdd18011b513
+        approle_id: 0af6ba7e-670c-83ed-a5ae-3919aa0bf4fa
+        approle_secret: 30139674-dedc-d3af-dcb7-0b48fbd5e563
 
     - debug:
-        msg: '{{ test_key }} - {{ v1_1_secret }}'
+        msg: '{{ from_vault }}'
