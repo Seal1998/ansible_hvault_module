@@ -28,8 +28,8 @@ def get_single_secret(url, path, token, namespace, mounts):
     else:
         kv_mount_version = mounts[kv_mount+'/']['options']['version']
     
-    pull_api_endpoint = 'data' if kv_mount_version == '2' else ''
-    secret_url = '%s/v1/%s/%s/%s' % (url, kv_mount, pull_api_endpoint, kv_mountless)
+    pull_api_endpoint = 'data/' if kv_mount_version == '2' else ''
+    secret_url = '%s/v1/%s/%s%s' % (url, kv_mount, pull_api_endpoint, kv_mountless)
 
     try:
         response_data_raw = open_url(   
@@ -140,6 +140,17 @@ def run_module():
     secret_paths = []
     complex_secrets = {}
 
+# handling wrong paths spec
+    corrected_paths = module.params['secret_path'].copy()
+    for raw_path in module.params['secret_path']:
+        if type(raw_path) is list:
+            # if path is list - unpack it and merge it with main paths
+            corrected_paths.remove(raw_path)
+            corrected_paths = list([*corrected_paths, *raw_path])
+    
+# replacing paths arg with corrected one
+    module.params['secret_path'] = corrected_paths
+
 # construct paths list and complex secrets dict
     for raw_path in module.params['secret_path']:
         if type(raw_path) is dict:
@@ -188,6 +199,9 @@ def run_module():
             
         # complex secret pipeline
             if 'keys' in complex_secret.keys():
+                #if just one exclude key specified in form of 'key: value' (not list)
+                if type(complex_secret['keys']) is str:
+                    complex_secret['keys'] = [complex_secret['keys'],]
                 secret_data = { key: secret.secret_data[key] for key in complex_secret['keys'] 
                                                                 if key in secret.secret_data.keys() }
 
