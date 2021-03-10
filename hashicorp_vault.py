@@ -141,12 +141,13 @@ def run_module():
     complex_secrets = {}
 
 # handling wrong paths spec
-    corrected_paths = module.params['secret_path'].copy()
+    corrected_paths = module.params['secret_path'][:]
     for raw_path in module.params['secret_path']:
         if type(raw_path) is list:
             # if path is list - unpack it and merge it with main paths
             corrected_paths.remove(raw_path)
-            corrected_paths = list([*corrected_paths, *raw_path])
+            #corrected_paths = list([*corrected_paths, *raw_path])
+            corrected_paths = corrected_paths + raw_path
     
 # replacing paths arg with corrected one
     module.params['secret_path'] = corrected_paths
