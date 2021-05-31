@@ -125,6 +125,11 @@ def run_module():
         'namespace': {
             'type': 'str',
             'default': 'root'
+        },
+
+        'auth_namespace': {
+            'type': 'str',
+            'default': 'root'
         }
     }
 
@@ -170,7 +175,8 @@ def run_module():
         module.fail_json(msg='No AppRole or token login credentials')
 
     elif all([module.params['approle_id'], module.params['approle_secret']]):
-        token, error = login_approle(vault_url, module.params['approle_id'], module.params['approle_secret'], namespace)
+        auth_namespace = module.params['auth_namespace']
+        token, error = login_approle(vault_url, module.params['approle_id'], module.params['approle_secret'], auth_namespace)
         if error:
             module.fail_json(msg='%s' % error)
 
