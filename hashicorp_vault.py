@@ -13,7 +13,7 @@ except ImportError:
     from urllib2 import HTTPError, URLError
 
 def split_path_by_parts(path):
-    full_path_parts = list(filter(lambda p: p != '', path.split('/'))) # trim '' elements if path contain slash at the end (one/two/)
+    full_path_parts = list(filter(lambda p: p != '', path.split('/'))) # trim '' elements if path contain slash at the end (e.q. one/two/)
     kv_mount_path = full_path_parts[0]
     secret_name = full_path_parts[-1]
     kv_mountless_path = '/'.join(full_path_parts[1:])
@@ -67,12 +67,9 @@ def create_secret(url, name, path, data, token, namespace, mounts):
 def list_location_secrets(url, path, token, namespace, mounts):
     kv_mount, kv_mountless, _ = split_path_by_parts(path)
 
-    if kv_mount+'/' not in mounts.keys():
-        return False, '%s kv engine does not exist' % kv_mount
-    else:
-        kv_mount_version = mounts[kv_mount+'/']['options']['version']
+    kv_mount_version = get_kv_mount_version(kv_mount, mounts)
     
-    pull_api_endpoint = 'metadata/' if kv_mount_version == '2' else ''
+    pull_api_endpoint = 'metadata/' if kv_mount_version == 2 else ''
     list_url = '%s/v1/%s/%s%s' % (url, kv_mount, pull_api_endpoint, kv_mountless)
 
     response_data_versionless, error = request('LIST', list_url, {'X-Vault-Token': token, 'X-Vault-Namespace': namespace})
@@ -91,12 +88,9 @@ def get_single_secret(url, path, token, namespace, mounts):
 
     VaultSecret = namedtuple('VaultSecret', ['full_path', 'secret_name', 'secret_data'])
 
-    if kv_mount+'/' not in mounts.keys():
-        return False, '%s kv engine does not exist' % kv_mount
-    else:
-        kv_mount_version = mounts[kv_mount+'/']['options']['version']
+    kv_mount_version = get_kv_mount_version(kv_mount, mounts)
     
-    pull_api_endpoint = 'data/' if kv_mount_version == '2' else ''
+    pull_api_endpoint = 'data/' if kv_mount_version == 2 else ''
     secret_url = '%s/v1/%s/%s%s' % (url, kv_mount, pull_api_endpoint, kv_mountless)
 
     response_data_versionless, error = request('GET', secret_url, {'X-Vault-Token': token, 'X-Vault-Namespace': namespace})
