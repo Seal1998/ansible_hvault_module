@@ -1,5 +1,6 @@
 import json
 from collections import namedtuple
+from urllib import error
 from ansible.module_utils.urls import open_url
 from ansible.module_utils.basic import AnsibleModule
 
@@ -18,10 +19,30 @@ def split_path_by_parts(path):
     kv_mountless_path = '/'.join(full_path_parts[1:])
     return kv_mount_path, kv_mountless_path, secret_name
 
+def request(type, url, headers, data=None):
+    try:
+        response_data_raw = open_url(   
+                            url=url,
+                            headers=headers,
+                            method=type,
+                            validate_certs=False,
+                            data = data
+                            )
+        response_data = json.load(response_data_raw)
+        
+        return response_data, False
+
+    except HTTPError as err:
+        return False, '%s - %s %s' % \
+                            (url, err.code, err.reason)
+    except URLError as err:
+        return False, '%s - %s' % (url, err.reason)
+    
+    except Exception as err:
+        return False, '%s - %s' % (url, err.reason)
+
 def list_location_secrets(url, path, token, namespace, mounts):
     kv_mount, kv_mountless, _ = split_path_by_parts(path)
-
-    print(kv_mount)
 
     if kv_mount+'/' not in mounts.keys():
         return False, '%s kv engine does not exist' % kv_mount
@@ -31,27 +52,16 @@ def list_location_secrets(url, path, token, namespace, mounts):
     pull_api_endpoint = 'metadata/' if kv_mount_version == '2' else ''
     list_url = '%s/v1/%s/%s%s' % (url, kv_mount, pull_api_endpoint, kv_mountless)
 
-    try:
-        response_data_raw = open_url(   
-                            url=list_url,
-                            headers={'X-Vault-Token': token, 'X-Vault-Namespace': namespace},
-                            method='LIST',
-                            validate_certs=False
-                            )
-    except HTTPError as err:
-        return False, '%s - %s %s' % \
-                            (list_url, err.code, err.reason)
-    except URLError as err:
-        return False, '%s - %s' % (list_url, err.reason)
+    response_data_versionless, error = request('LIST', list_url, {'X-Vault-Token': token, 'X-Vault-Namespace': namespace})
 
-    response_data_versionless = json.load(response_data_raw)
-    response_data_unfiltered = ['%s%s/%s' % (kv_mount, '/'+kv_mountless if kv_mountless != '' else '', key) \
-                                                    for key in response_data_versionless['data']['keys']]
-    response_data = list(filter(lambda p: p[-1] != '/', response_data_unfiltered))
-
-    listed_secrets = response_data
-
-    return listed_secrets, False
+    if error:
+        return False, error
+    else:
+        response_data_unfiltered = ['%s%s/%s' % (kv_mount, '/'+kv_mountless if kv_mountless != '' else '', key) \
+                                                        for key in response_data_versionless['data']['keys']]
+        response_data = list(filter(lambda p: p[-1] != '/', response_data_unfiltered))
+        listed_secrets = response_data
+        return listed_secrets, False
 
 def get_single_secret(url, path, token, namespace, mounts):
     kv_mount, kv_mountless, secret_name = split_path_by_parts(path)
@@ -66,68 +76,38 @@ def get_single_secret(url, path, token, namespace, mounts):
     pull_api_endpoint = 'data/' if kv_mount_version == '2' else ''
     secret_url = '%s/v1/%s/%s%s' % (url, kv_mount, pull_api_endpoint, kv_mountless)
 
-    try:
-        response_data_raw = open_url(   
-                            url=secret_url,
-                            headers={'X-Vault-Token': token, 'X-Vault-Namespace': namespace},
-                            method='GET',
-                            validate_certs=False
-                            )
-    except HTTPError as err:
-        return False, '%s - %s %s' % \
-                            (secret_url, err.code, err.reason)
-    except URLError as err:
-        return False, '%s - %s' % (secret_url, err.reason)
+    response_data_versionless, error = request('GET', secret_url, {'X-Vault-Token': token, 'X-Vault-Namespace': namespace})
+    if error:
+        return False, error
+    else:
+        response_data = response_data_versionless['data'] if kv_mount_version == '1' else \
+                                                response_data_versionless['data']['data']
 
-    response_data_versionless = json.load(response_data_raw)
-    response_data = response_data_versionless['data'] if kv_mount_version == '1' else \
-                                            response_data_versionless['data']['data']
+        secret = VaultSecret('%s/%s' % (kv_mount,kv_mountless), secret_name, response_data)
 
-    secret = VaultSecret('%s/%s' % (kv_mount,kv_mountless), secret_name, response_data)
-
-    return secret, False
+        return secret, False
 
 def login_approle(url, role_id, secret_id, namespace):
     approle_login_url = '%s/v1/auth/approle/login' % url
 
     data = json.dumps({'role_id': role_id, 'secret_id': secret_id}).encode()
 
-    try:
-        login_raw = open_url(   
-                            url=approle_login_url,
-                            headers={'X-Vault-Namespace': namespace},
-                            method='POST',
-                            data=data,
-                            validate_certs=False
-                            )
-    except HTTPError as err:
-        return False, '%s - %s %s' % \
-                            (approle_login_url, err.code, err.reason)
-    except URLError as err:
-        return False, '%s - %s' % (approle_login_url, err.reason)
+    login_data, error = request('POST', approle_login_url, {'X-Vault-Namespace': namespace}, data)
 
-    token = json.load(login_raw)['auth']['client_token']
-    
-    return token, False
+    if error:
+        return False, error
+    else:
+        return login_data['auth']['client_token'], False
 
 def get_mounts_info(url, token, namespace):
     mounts_url = '%s/v1/sys/mounts' % url
-    try:
-        mounts_raw = open_url(   
-                            url=mounts_url,
-                            headers={'X-Vault-Token': token, 'X-Vault-Namespace': namespace},
-                            method='GET',
-                            validate_certs=False
-                            )
-    except HTTPError as err:
-        return False, '%s - %s %s' % \
-                            (mounts_url, err.code, err.reason)
-    except URLError as err:
-        return False, '%s - %s' % (mounts_url, err.reason)    
 
-    mounts = json.load(mounts_raw)['data']
-
-    return mounts, False
+    mounts, error = request('GET', mounts_url, {'X-Vault-Token': token, 'X-Vault-Namespace': namespace})
+    if error:
+        return False, error
+    else:
+        mounts = mounts['data']
+        return mounts, False
 
 def run_module():
     args = {
@@ -162,6 +142,11 @@ def run_module():
             'type': 'str',
             'required': False
         },
+
+        'create_secret': {
+            'type': 'dict',
+            'required': False
+        },#not implemented
 
         'namespace': {
             'type': 'str',
@@ -218,6 +203,16 @@ def run_module():
     if all([module.params['secret_path'], module.params['list_path']]):
         module.fail_json(msg='%s' % 'Both secret_path and list_path specified')
 
+    elif module.params['create_secret'] is not None:
+        create_specs = module.params['create_secret']
+        if type(create_specs) is dict:
+            if all([k in create_specs for k in ('name', 'path', 'data')]):
+                pass
+            else:
+                module.fail_json(msg='create_secret should contain [path, data] keys')
+        else:
+            module.fail_json(msg='create_secret accept only dict with [path, data] keys')
+
     elif module.params['list_path'] is not None:
     # list_path should be string only
         if type(module.params['list_path']) is not str:
@@ -226,8 +221,11 @@ def run_module():
             listed_secrets, error = list_location_secrets(vault_url, module.params['list_path'], token, namespace, vault_mounts)
             if error:
                 module.fail_json(msg='%s' % error)
-        
-        result['listed_secrets'] = listed_secrets
+
+        if module.params['return_facts']:
+            result['ansible_facts']['vault_listed'] = listed_secrets
+        else:
+            result['data']['vault_listed'] = listed_secrets
 
     elif module.params['secret_path'] is not None:
     # handling wrong paths spec
@@ -297,12 +295,14 @@ def run_module():
                 secret_data = secret.secret_data
 
     # populate ansible fact for each KV pair
+            return_data = {}
+            for key, value in secret_data.items():
+                return_data[key] = value
+
             if module.params['return_facts']:
-                for key, value in secret_data.items():
-                    result['ansible_facts'][key] = value
+                result['ansible_facts'] = {**result['ansible_facts'], **return_data}
             else:
-                for key, value in secret_data.items():
-                    result['data'][key] = value
+                result['data'] = {**result['data'], **return_data}
 
 # add token to the result
     result['token'] = token
