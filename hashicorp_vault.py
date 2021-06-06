@@ -13,11 +13,18 @@ except ImportError:
     from urllib2 import HTTPError, URLError
 
 def split_path_by_parts(path):
-    full_path_parts = path.split('/')
+    full_path_parts = list(filter(lambda p: p != '', path.split('/'))) # trim '' elements if path contain slash at the end (one/two/)
     kv_mount_path = full_path_parts[0]
     secret_name = full_path_parts[-1]
     kv_mountless_path = '/'.join(full_path_parts[1:])
     return kv_mount_path, kv_mountless_path, secret_name
+
+def get_kv_mount_version(mount_name, mounts):
+    if mount_name+'/' not in mounts.keys():
+        return False, '%s kv engine does not exist' % mount_name
+    else:
+        kv_mount_version = mounts[mount_name+'/']['options']['version']
+    return int(kv_mount_version)
 
 def request(type, url, headers, data=None):
     try:
@@ -39,7 +46,23 @@ def request(type, url, headers, data=None):
         return False, '%s - %s' % (url, err.reason)
     
     except Exception as err:
-        return False, '%s - %s' % (url, err.reason)
+        return False, '%s' % (err)
+
+def create_secret(url, name, path, data, token, namespace, mounts):
+    kv_mount, kv_mountless, _ = split_path_by_parts(path)
+
+    mount_version = get_kv_mount_version(kv_mount, mounts)
+
+    create_api_endpoint = 'data/' if mount_version == 2 else ''
+    create_url = '%s/v1/%s/%s%s/%s' % (url, kv_mount, create_api_endpoint, kv_mountless, name)
+    
+    secret_data = json.dumps({'data': data}).encode()
+    create_data, error = request('POST', create_url, {'X-Vault-Token': token, 'X-Vault-Namespace': namespace}, secret_data)
+
+    if error:
+        return False, error
+    else:
+        return create_data, False
 
 def list_location_secrets(url, path, token, namespace, mounts):
     kv_mount, kv_mountless, _ = split_path_by_parts(path)
@@ -133,8 +156,7 @@ def run_module():
         },  
 
         'secret_path': {
-            'type': 'list',
-            'elements': 'raw',
+            'type': 'raw',
             'required': False
         },
 
@@ -146,7 +168,7 @@ def run_module():
         'create_secret': {
             'type': 'dict',
             'required': False
-        },#not implemented
+        },
 
         'namespace': {
             'type': 'str',
@@ -168,7 +190,8 @@ def run_module():
     result = {
         'check_mode': False,
         'ansible_facts': {},
-        'data': {}
+        'data': {},
+        'metadata': {}
     }
 
     vault_url = module.params['url']
@@ -203,17 +226,21 @@ def run_module():
     if all([module.params['secret_path'], module.params['list_path']]):
         module.fail_json(msg='%s' % 'Both secret_path and list_path specified')
 
-    elif module.params['create_secret'] is not None:
+    if module.params['create_secret'] is not None:
         create_specs = module.params['create_secret']
         if type(create_specs) is dict:
             if all([k in create_specs for k in ('name', 'path', 'data')]):
-                pass
+                create_response, error = create_secret(vault_url, create_specs['name'], create_specs['path'], create_specs['data'], token, namespace, vault_mounts)
+                if error:
+                    module.fail_json(msg='%s' % error)
+                else:
+                    result['metadata']['created_secret'] = create_response
             else:
                 module.fail_json(msg='create_secret should contain [path, data] keys')
         else:
             module.fail_json(msg='create_secret accept only dict with [path, data] keys')
 
-    elif module.params['list_path'] is not None:
+    if module.params['list_path'] is not None:
     # list_path should be string only
         if type(module.params['list_path']) is not str:
             module.fail_json(msg='%s' % 'list_path parameter should contain string only')
@@ -228,7 +255,11 @@ def run_module():
             result['data']['vault_listed'] = listed_secrets
 
     elif module.params['secret_path'] is not None:
-    # handling wrong paths spec
+        # ability to pass single dict or string as a secret_path
+        if type(module.params['secret_path']) in (dict, str):
+            module.params['secret_path'] = [module.params['secret_path']]
+
+    # handling wrong paths spec (when path is list of lists)
         corrected_paths = module.params['secret_path'][:]
         for raw_path in module.params['secret_path']:
             if type(raw_path) is list:
@@ -256,7 +287,7 @@ def run_module():
                             complex_secrets[secret_name] = complex_secret
                             secret_paths.append(secret_path)
                     else:
-                        module.fail_json(msg='containerized_by_name should be list of paths')
+                        module.fail_json(msg='containerized_by_name should be list of strings')
 
                 else:
                     module.fail_json(msg='Wrong path form %s secret' % raw_path)
