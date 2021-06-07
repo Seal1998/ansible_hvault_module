@@ -1,6 +1,5 @@
 import json
 from collections import namedtuple
-from urllib import error
 from ansible.module_utils.urls import open_url
 from ansible.module_utils.basic import AnsibleModule
 
@@ -325,9 +324,9 @@ def run_module():
                 return_data[key] = value
 
             if module.params['return_facts']:
-                result['ansible_facts'] = {**result['ansible_facts'], **return_data}
+                result['ansible_facts'] = {k:v for d in [result['ansible_facts'], return_data] for k,v in d.items()}
             else:
-                result['data'] = {**result['data'], **return_data}
+                result['data'] = {k:v for d in [result['data'], return_data] for k,v in d.items()}
 
 # add token to the result
     result['token'] = token
