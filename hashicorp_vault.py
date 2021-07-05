@@ -52,8 +52,9 @@ def create_secret(url, name, path, data, token, namespace, mounts):
 
     mount_version = get_kv_mount_version(kv_mount, mounts)
 
-    create_api_endpoint = 'data/' if mount_version == 2 else ''
-    create_url = '%s/v1/%s/%s%s/%s' % (url, kv_mount, create_api_endpoint, kv_mountless, name)
+    create_api_endpoint = 'data' if mount_version == 2 else ''
+    url_parts = tuple(filter(lambda el: el != '', [kv_mount, create_api_endpoint, kv_mountless, name]))
+    create_url = '%s/v1/%s' % (url, '/'.join(url_parts))
     
     secret_data = json.dumps({'data': data}).encode()
     create_data, error = request('POST', create_url, {'X-Vault-Token': token, 'X-Vault-Namespace': namespace}, secret_data)
